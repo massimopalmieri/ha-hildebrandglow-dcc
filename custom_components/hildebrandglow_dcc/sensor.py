@@ -5,8 +5,8 @@ from collections.abc import Callable
 from datetime import datetime, time, timedelta
 import logging
 
-from pytz import timezone
 import requests
+from homeassistant.util import dt as dt_util
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -27,9 +27,9 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(minutes=5)
 
-# Replace 'Europe/London' with your actual timezone
-tz = timezone("Europe/London")
-
+def get_timezone(hass: HomeAssistant):
+    """Return Home Assistant configured timezone."""
+    return dt_util.get_time_zone(hass.config.time_zone)
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: Callable
@@ -137,8 +137,9 @@ def device_name(resource, virtual_entity) -> str:
     return name
 
 
-async def should_update() -> bool:
+async def should_update(hass: HomeAssistant) -> bool:
     """Check if time is between 0-5 or 30-35 minutes past the hour."""
+    tz = get_timezone(hass)
     minutes = datetime.now(tz).minute
     if (0 <= minutes <= 5) or (30 <= minutes <= 35):
         return True
@@ -147,6 +148,7 @@ async def should_update() -> bool:
 
 async def daily_data(hass: HomeAssistant, resource) -> float:
     """Get daily usage from the API."""
+    tz = get_timezone(hass)
     # If it's before 01:06, we need to fetch yesterday's data
     # Should only need to be before 00:36 but gas data can be 30 minutes behind electricity data
     if datetime.now(tz).time() <= time(1, 5):
@@ -285,7 +287,7 @@ class Usage(SensorEntity):
                 self.initialised = True
         else:
             # Only update the sensor if it's between 0-5 or 30-35 minutes past the hour
-            if await should_update():
+            if await should_update(self.hass):
                 value = await daily_data(self.hass, self.resource)
                 if value:
                     self._attr_native_value = round(value, 2)
@@ -330,7 +332,7 @@ class Cost(SensorEntity):
                 self.initialised = True
         else:
             # Only update the sensor if it's between 0-5 or 30-35 minutes past the hour
-            if await should_update():
+            if await should_update(self.hass):
                 value = await daily_data(self.hass, self.resource)
                 if value:
                     self._attr_native_value = round(value / 100, 2)
@@ -364,7 +366,7 @@ class TariffCoordinator(DataUpdateCoordinator):
             self.standing_initialised = True
             return await tariff_data(self.hass, self.resource)
         # Only poll when updated data might be available
-        if await should_update():
+        if await should_update(self.hass):
             tariff = await tariff_data(self.hass, self.resource)
             return tariff
 
